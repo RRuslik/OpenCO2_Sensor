@@ -10,7 +10,7 @@
    - WiFiManager: https://github.com/tzapu/WiFiManager
    - ArduinoMqttClient (if MQTT is defined)
 */
-#define VERSION "v5.5"
+#define VERSION "v5.6"
 
 #define HEIGHT_ABOVE_SEA_LEVEL 50             // Berlin
 #define TZ_DATA "CET-1CEST,M3.5.0,M10.5.0/3"  // Europe/Berlin time zone from https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv
@@ -71,9 +71,9 @@ Adafruit_DotStar strip(1, 40, 39, DOTSTAR_BRG);  // numLEDs, DATAPIN, CLOCKPIN
 
 /* scd4x */
 #include <Arduino.h>
-#include <SensirionI2CScd4x.h>
+#include <SensirionI2cScd4x.h>
 #include <Wire.h>
-SensirionI2CScd4x scd4x;
+SensirionI2cScd4x scd4x;
 
 
 #ifndef ARDUINO_USB_MODE
@@ -92,7 +92,8 @@ RTC_DATA_ATTR float maxBatteryVoltage;
 
 /* TEST_MODE */
 RTC_DATA_ATTR bool TEST_MODE;
-RTC_DATA_ATTR uint16_t sensorStatus, serial0, serial1, serial2;
+RTC_DATA_ATTR uint16_t sensorStatus;
+RTC_DATA_ATTR uint64_t serialNumber;
 
 RTC_DATA_ATTR uint16_t co2 = 400;
 RTC_DATA_ATTR float temperature = 0.0f, humidity = 0.0f;
@@ -179,7 +180,7 @@ void HandleRootClient() {
   message += "<style> .container { display: flex; gap: 15px; } .rounded-box { font-family: Verdana, Geneva, sans-serif; width: 400px; height: 300px; border-radius: 25px; position: relative; display: flex; flex-direction: column; justify-content: center; font-size: 4em; border: 4px solid grey; } .descr-text { position: absolute; top: 10px; left: 10px; font-size: 0.5em; } .center-text { font-size: 1.5em; text-align: center; } .unit-text { font-size: 0.5em; } </style>";
   message += "</head>\n";
 
-  message += "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>\n";
+  message += "<script src='https://cdn.plot.ly/plotly-3.0.1.min.js' charset='utf-8'></script>\n";
   message += "<body style='color: grey; background: black;'>\n";
 
   message += "<div class='container'><div class='rounded-box' style='background-color:#" + getHexColors(co2) + "; color:'grey';'><div class='descr-text'>CO2</div><div class='center-text'><b>" + String(co2) + "</b><div class='unit-text'>ppm</div></div></div>\n";
@@ -363,9 +364,9 @@ void initOnce() {
   preferences.end();
 
   scd4x.stopPeriodicMeasurement();  // stop potentially previously started measurement
-  scd4x.getSerialNumber(serial0, serial1, serial2);
+  scd4x.getSerialNumber(serialNumber);
   scd4x.setSensorAltitude(HEIGHT_ABOVE_SEA_LEVEL);
-  scd4x.setAutomaticSelfCalibration(1);
+  scd4x.setAutomaticSelfCalibrationEnabled(1); // Or use setAutomaticSelfCalibrationTarget if needed
   scd4x.setTemperatureOffset(getTempOffset());
   scd4x.startPeriodicMeasurement();
 
@@ -614,6 +615,7 @@ void rainbowMode() {
 }
 
 void saveMeasurement(uint16_t co2, float temperature, float humidity) {
+  if (co2 == 0) return; // invalid measurement
   co2measurements[currentIndex] = co2;
   if (!(currentIndex % 4)) { // every 2 minutes
     tempHumMeasurements[currentIndex / 4].temperature = (uint16_t)(temperature * 10);
@@ -749,7 +751,7 @@ void setup() {
 
   /* scd4x */
   Wire.begin(33, 34);  // green, yellow
-  scd4x.begin(Wire);
+  scd4x.begin(Wire, 0x62); // 0x62 is the default I2C address for SCD4x
 
   USB.onEvent(usbEventCallback);
   usbmsc.isWritable(true);
@@ -812,7 +814,7 @@ void loop() {
   }
 
   bool isDataReady = false;
-  uint16_t ready_error = scd4x.getDataReadyFlag(isDataReady);
+  uint16_t ready_error = scd4x.getDataReadyStatus(isDataReady);
   if (ready_error || !isDataReady) {
     if (BatteryMode && comingFromDeepSleep) goto_deep_sleep(DEEP_SLEEP_TIME/2);
     else goto_light_sleep(LIGHT_SLEEP_TIME/2);
